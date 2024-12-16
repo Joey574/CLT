@@ -44,6 +44,8 @@ void get_user_input(char* state) {
     scanf("%d", &choice);
     choice--;
 
+    while (getchar() != '\n') {}
+
     if (choice < 0 || choice > 8 || state[choice] != 0) {
         printf("Invalid index...\n");
         goto get_choice;
