@@ -72,7 +72,6 @@ char game_over(char* state) {
     // check rows
     for(int r = 0; r < 3; r++) {
         if (state[r * 3] > 0 && state[r * 3] == state[r * 3 + 1] && state[r * 3 + 1] == state[r * 3 + 2]) {
-            printf("r win\n");
             return state[r * 3];
         }
     }
@@ -80,25 +79,21 @@ char game_over(char* state) {
     // check columns
     for(int c = 0; c < 3; c++) {
         if (state[c] > 0 && state[c] == state[c + 3] && state[c + 3] == state[c + 6]) {
-            printf("c win\n");
             return state[c];
         }
     }
 
     // check diagonals
     if (state[0] > 0 && state[0] == state[4] && state[4] == state[8]) {
-        printf("d win 1\n");
         return state[0];
     }
 
     if (state[2] > 0 && state[2] == state[4] && state[4] == state[6]) {
-        printf("d win 2\n");
         return state[2];
     }
 
     // check for tie
-    if (state[0] == 0 && state[1] == 0 && state[2] == 0 && state[3] == 0 && state[4] == 0 && state[5] == 0 && state[6] == 0 && state[7] == 0 && state[8] == 0) {
-        printf("tie\n");
+    if (state[0] != 0 && state[1] != 0 && state[2] != 0 && state[3] != 0 && state[4] != 0 && state[5] != 0 && state[6] != 0 && state[7] != 0 && state[8] != 0) {
         return 3;
     }
 
@@ -111,6 +106,7 @@ int main(int argc, char* argv[]) {
 
     while (true) {
         print_state(state);
+
         get_user_input(state);
         win = game_over(state);
 
