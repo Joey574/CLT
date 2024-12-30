@@ -22,6 +22,11 @@ typedef struct {
 typedef struct {
     uint8_t data[16];
 } uint_128_t;
+typedef struct {
+    size_t len;
+    char* ct;
+} ct_data;
+
 
 static const uint8_t sbox[256] = {
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 
@@ -157,8 +162,23 @@ void inv_mixcolumns(uint8_t state[16]);
 void cipher(uint8_t* output, const uint8_t* input, const uint_256_t key);
 void inv_cipher(uint8_t* output, const uint8_t* input, const uint_256_t key);
 
-char* encrypt(const char* plaintext, const uint_256_t key);
-char* decrypt(const char* ciphertext, const uint_256_t key);
+ct_data encrypt(ct_data plaintext, const uint_256_t key);
+ct_data decrypt(ct_data ciphertext, const uint_256_t key);
+
+
+ct_data recv_message(int connection) {
+    ct_data msg;
+    recv(connection, &msg.len, sizeof(msg.len), 0);
+
+    msg.ct = (char*)malloc(msg.len);
+    recv(connection, msg.ct, msg.len, 0);
+
+    return msg;
+}
+void send_message(int connection, ct_data msg) {
+    send(connection, &msg.len, sizeof(msg.len), 0);
+    send(connection, msg.ct, msg.len, 0);
+}
 
 int main(int argc, char* argv[]) {
     srand(time(0));
@@ -222,30 +242,26 @@ int main(int argc, char* argv[]) {
     uint_256_t shared_key = dhke_handshake(connection);
 
     #if LOG
-    printf("DHKE Complete\n");
+    printf("DHKE Complete\n\n");
     #endif
 
-    char* input;
+    ct_data text;
     if (hosting) {
-        input = "Hello client... how are you this wonderful morning? It's been a long day of debugging this stupid aes stuff for me :/\x00";
+        text.ct = "Hello client... how are you this wonderful morning? It's been a long day of debugging this stupid aes stuff for me :/\x00";
     } else {
-        input = "Hello server... im doing great :) tysm, yeah I get you, it's definitely a little finicky, especially that mix columns stuff\x00";
+        text.ct = "Hello server... im doing great :) tysm, yeah I get you, it's definitely a little finicky, especially that mix columns stuff\x00";
     }
+    text.len = strlen(text.ct);
 
-    printf("Local plaintext: %s\n", input);
+    printf("Local plaintext:\n%s\n\n", text.ct);
 
-    for(int i = 0; i < 50; i++) {
+    ct_data ct = encrypt(text, shared_key);
+    send_message(connection, ct);
 
-        char* ciphertext = encrypt(input, shared_key);
-        send(connection, ciphertext, strlen(ciphertext), 0);
+    ct_data rct = recv_message(connection);
+    ct_data pt = decrypt(rct, shared_key);
 
-        //printf("Local encrypted data: %s\n", ciphertext);
-
-        char* plaintext = decrypt(ciphertext, shared_key);
-        printf("Local decrypted: %s\n", plaintext);
-    }
-    
-
+    printf("Recieved message:\n%s\n\n", pt.ct);
 
     // main loop for communicating, at this point client and server are connected and can send data
     while(1) {
@@ -511,60 +527,56 @@ void inv_cipher(uint8_t* output, const uint8_t* input, const uint_256_t key) {
     memcpy(output, state, 16);
 }
 
-char* encrypt(const char* plaintext, const uint_256_t key) {
+ct_data encrypt(ct_data plaintext, const uint_256_t key) {
     uint8_t input[16];
     uint8_t output[16];
 
-    size_t len = strlen(plaintext) % 16 == 0 ? strlen(plaintext) : (((strlen(plaintext) / 16) + 1) * 16);
-    char* ciphertext = (char*)calloc(len + 1, 1);
+    ct_data ciphertext;
+
+    ciphertext.len = plaintext.len % 16 == 0 ? plaintext.len : (((plaintext.len / 16) + 1) * 16);
+    ciphertext.ct = (char*)calloc(ciphertext.len + 1, 1);
 
     // store plaintext in ciphertext to prevent over reading
-    memcpy(ciphertext, plaintext, strlen(plaintext));
+    memcpy(ciphertext.ct, plaintext.ct, plaintext.len);
 
     // assign last n bytes of padding to n
-    uint8_t pad = (len - strlen(plaintext));
-    printf("Applied padding: %d\n", pad);
-    for(size_t i = strlen(plaintext); i < len; i++) {
-        ciphertext[i] = (uint8_t)(len - strlen(plaintext));
+    for(size_t i = plaintext.len; i < ciphertext.len; i++) {
+        ciphertext.ct[i] = (uint8_t)(ciphertext.len - plaintext.len);
     }
-    printf("last byte: %d\n", ciphertext[len]);
 
-    for(size_t i = 0; i  < len / 16; i++) {
+    for(size_t i = 0; i  < ciphertext.len / 16; i++) {
         memset(output, 0, 16);
 
-        memcpy(input, &ciphertext[i * 16], 16);
+        memcpy(input, &ciphertext.ct[i * 16], 16);
         cipher(output, input, key);
-        memcpy(&ciphertext[i * 16], output, 16);
+        memcpy(&ciphertext.ct[i * 16], output, 16);
     }
 
     return ciphertext;
 }
-char* decrypt(const char* ciphertext, const uint_256_t key) {
+ct_data decrypt(ct_data ciphertext, const uint_256_t key) {
     uint8_t input[16];
     uint8_t output[16];
 
-    size_t len = strlen(ciphertext);
-    char* plaintext = (char*)malloc(len);
+    ct_data plaintext;
+    plaintext.len = ciphertext.len;
+    plaintext.ct = (char*)calloc(plaintext.len + 1, 1);
 
-    for(size_t i = 0; i < len / 16; i++) {
+    for(size_t i = 0; i < plaintext.len / 16; i++) {
         memset(output, 0, 16);
         memset(input, 0, 16);
 
-        memcpy(input, &ciphertext[i * 16], 16);
+        memcpy(input, &ciphertext.ct[i * 16], 16);
         inv_cipher(output, input, key);
-        memcpy(&plaintext[i * 16], output, 16);
+        memcpy(&plaintext.ct[i * 16], output, 16);
     }
 
     // remove n bytes containing n at end
-    printf("last byte: %d\n", plaintext[len - 1]);
-    if ((uint8_t)plaintext[len - 1] < 16) {
-        uint8_t padlen = plaintext[len - 1];
+    if ((uint8_t)plaintext.ct[plaintext.len - 1] < 16) {
 
-        printf("padding len: %d\n", padlen);
-        memset(&plaintext[len - padlen], 0, padlen);
+        uint8_t padlen = plaintext.ct[plaintext.len - 1];
+        memset(&plaintext.ct[plaintext.len - padlen], 0, padlen);
     }
-
-    
 
     return plaintext;
 }
