@@ -253,19 +253,15 @@ int main(int argc, char* argv[]) {
     }
     text.len = strlen(text.ct);
 
-    printf("Local plaintext:\n%s\n\n", text.ct);
-
-    ct_data ct = encrypt(text, shared_key);
-    send_message(connection, ct);
-
-    ct_data rct = recv_message(connection);
-    ct_data pt = decrypt(rct, shared_key);
-
-    printf("Recieved message:\n%s\n\n", pt.ct);
-
     // main loop for communicating, at this point client and server are connected and can send data
     while(1) {
+        ct_data ct = encrypt(text, shared_key);
+        send_message(connection, ct);
 
+        ct_data rct = recv_message(connection);
+        ct_data pt = decrypt(rct, shared_key);
+
+        printf("Recieved message:\n%s\n\n", pt.ct);
     }
 }
 
@@ -292,10 +288,6 @@ uint_256_t dhke_handshake(int connection) {
     srand(s);
 
     uint_256_t key = { rand_uint64_t(), rand_uint64_t(), rand_uint64_t(), rand_uint64_t()};
-
-    #if LOG
-    printf("Shared Key: %lu%lu%lu%lu\n", key.data[0], key.data[1], key.data[2], key.data[3]);
-    #endif
 
     return key;
 }
