@@ -33,10 +33,15 @@ void append(string* str, const char* data) {
     str->str[str->len] = '\x00';
 }
 void appendch(string* str, char data) {
-    str->str = realloc(str->str, str->len + 1);
-    str->str[str->len] = data;
     str->len++;
+    str->str = realloc(str->str, str->len + 1);
+    str->str[str->len - 1] = data;
     str->str[str->len] = '\x00';
+}
+void clearstr(string* str) {
+    str->len = 0;
+    str->str = (char*)realloc(str->str, 1);
+    str->str[0] = '\x00';
 }
 
 string final_url(char* user) {
@@ -111,7 +116,39 @@ string parse_repos(string url, char* user) {
 }
 
 void parse_dir(LOCs* locs, string url) {
-    
+    const char* CURLCMD = "curl -s ";
+    const char* SUBSTRING = "<a title=\"";
+
+    char recvbuf[512];
+    FILE* pipe;
+
+    string finalcmd = { 0, (char*)malloc(1) };
+    append(&finalcmd, CURLCMD);
+    append(&finalcmd, url.str);
+
+    string html = { 0, (char*)malloc(1) };
+
+    pipe = popen(finalcmd.str, "r");
+
+    while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
+        append(&html, recvbuf);
+        memset(recvbuf, 0, 512);
+    }
+
+    //printf("%s\n", html.str);
+
+    char* searchstring = html.str;
+    while((searchstring = strstr(searchstring, SUBSTRING)) != NULL) {
+        size_t idx = html.str - searchstring;
+        printf("%lu: %.50s\n", idx, searchstring);
+
+        searchstring += strlen(SUBSTRING);
+
+        // skip duplicate
+        searchstring = strstr(searchstring, SUBSTRING);
+        searchstring += strlen(SUBSTRING);
+    }
+
 }
 
 int main(int argc, char* argv[]) {
@@ -124,8 +161,22 @@ int main(int argc, char* argv[]) {
     string final = final_url(user);
 
     string repos = parse_repos(final, user);
-    printf("Repos:\n%s\n", repos.str);
 
     LOCs locs;
     memset(&locs, 0, sizeof(locs));
+
+    string tmp = { 0, (char*)malloc(1) };
+    for(size_t i = 0; i < repos.len; i++) {
+        if (repos.str[i] != '\n') {
+            appendch(&tmp, repos.str[i]);
+        } else {
+            printf("Searching: %s\n", tmp.str);
+            parse_dir(&locs, tmp);
+
+            printf("Total C lines: %lu\n", locs.c);
+
+            clearstr(&tmp);
+        }
+    }
+
 }
