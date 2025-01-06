@@ -83,7 +83,7 @@ void printstrarr(stringarr* arr) {
 stringarr parse_repos(char* user, char* pat, stringarr exclude) {
     const char* CURLCMD = "curl -s -H \"Authorization: token ";
     const char* SUBSTRING = "\"url\": \"";
-    const char* URL = "https://api.github.com/user/repos";
+    const char* URL = "https://api.github.com/users/";
     const char* HOMEURL = "https://api.github.com/users/";
 
     char recvbuf[512];
@@ -94,6 +94,8 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude) {
     append(&finalcmd, pat);
     append(&finalcmd, "\" ");
     append(&finalcmd, URL);
+    append(&finalcmd, user);
+    append(&finalcmd, "/repos");
 
     string html = { 0, (char*)malloc(0) };
 
@@ -367,6 +369,10 @@ int main(int argc, char* argv[]) {
             }
             
         }
+    }
+
+    if (pat == NULL) {
+        pat = "";
     }
 
     stringarr repos = parse_repos(user, pat, excluded);

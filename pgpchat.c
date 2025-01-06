@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdint.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 1024
 #define PORT 1234
@@ -180,6 +181,13 @@ void send_message(int connection, ct_data msg) {
     send(connection, msg.ct, msg.len, 0);
 }
 
+void recv_from_conn(void* args) {
+    int* connection = (int*)args[0];
+}
+void send_to_conn(void* args) {
+    int* connection = (int*)args[0];
+}
+
 int main(int argc, char* argv[]) {
     srand(time(0));
 
@@ -253,16 +261,28 @@ int main(int argc, char* argv[]) {
     }
     text.len = strlen(text.ct);
 
-    // main loop for communicating, at this point client and server are connected and can send data
-    while(1) {
-        ct_data ct = encrypt(text, shared_key);
-        send_message(connection, ct);
+    // // main loop for communicating, at this point client and server are connected and can send data
+    // while(1) {
+    //     ct_data ct = encrypt(text, shared_key);
+    //     send_message(connection, ct);
 
-        ct_data rct = recv_message(connection);
-        ct_data pt = decrypt(rct, shared_key);
+    //     ct_data rct = recv_message(connection);
+    //     ct_data pt = decrypt(rct, shared_key);
 
-        printf("Recieved message:\n%s\n\n", pt.ct);
-    }
+    //     printf("Recieved message:\n%s\n\n", pt.ct);
+    // }
+
+    pthread_t recv_thread, send_thread;
+
+    void* send_args[] = { &connection };
+    void* recv_args[] = { &connection };
+
+    pthread_create(&recv_thread, NULL, &recv_from_conn, recv_args);
+    pthread_create(&send_thread, NULL, &send_to_conn, send_args);
+
+    pthread_join(recv_thread, NULL);
+    pthread_join(send_thread, NULL);
+    
 }
 
 uint_256_t dhke_handshake(int connection) {
@@ -403,28 +423,24 @@ void shiftrows(uint8_t state[16]) {
     state[13] = tmp;
 }
 void mixcolumns(uint8_t state[16]) {
-    uint8_t tmp, tm, t;
+    // uint8_t a[4];
+    // uint8_t b[4];
+    // uint8_t h;
 
-    for(uint8_t i = 0; i < 4; i++) {
-        t = state[i];
-        tmp = state[i] ^ state[i + 4] ^ state[i + 8] ^ state[i + 12];
+    // for(uint8_t i = 0; i < 4; i++) {
+    //     for(uint8_t r = 0; r < 4; r++) {
+    //         a[r] = state[(r * 4) + i];
 
-        tm = state[i] ^ state[i + 4];
-        tm = xtime(tm);
-        state[i] ^= tm ^ tmp;
+    //         h = a[r] >> 7;
+    //         b[r] = a[r] << 1;
+    //         b[r] ^= h * 0x1b;
+    //     }
 
-        tm = state[i + 4] ^ state[i + 8];
-        tm = xtime(tm);
-        state[i + 4] ^= tm ^ tmp;
-
-        tm = state[i + 8] ^ state[i + 12];
-        tm = xtime(tm);
-        state[i + 8] ^= tm ^ tmp;
-
-        tm = state[i + 12] ^ t;
-        tm = xtime(tm);
-        state[i + 12] ^= tm ^ tmp;
-    }
+    //     state[i] =      b[0] ^ a[3] ^ a[2] ^ b[1] ^ a[1];
+    //     state[i + 4] =  b[1] ^ a[0] ^ a[3] ^ b[2] ^ a[2];
+    //     state[i + 8] =  b[2] ^ a[1] ^ a[0] ^ b[3] ^ a[3];
+    //     state[i + 12] = b[3] ^ a[2] ^ a[1] ^ b[0] ^ a[0];
+    // }
 }
 
 void inv_substitute_bytes(uint8_t state[16]) {
@@ -459,19 +475,38 @@ void inv_shiftrows(uint8_t state[16]) {
     state[15] = tmp;
 }
 void inv_mixcolumns(uint8_t state[16]) {
-    uint8_t a, b, c, d;
+    // uint8_t a[4];
+    // uint8_t b[4];
+    // uint8_t h;
 
-    for(uint8_t i = 0; i < 4; i++) {
-        a = state[i];
-        b = state[i + 4];
-        c = state[i + 8];
-        d = state[i + 12];
+    // for (uint8_t i = 0; i < 4; i++) {
+    //     for(uint8_t r = 0; r < 4; r++) {
+    //         a[r] = state[(r * 4) + i];
 
-        state[i] = invxtime(a, 0x0e) ^ invxtime(b, 0x0b) ^ invxtime(c, 0x0d) ^ invxtime(d, 0x09);
-        state[i + 4] = invxtime(a, 0x09) ^ invxtime(b, 0x0e) ^ invxtime(c, 0x0b) ^ invxtime(d, 0x0d);               
-        state[i + 8] = invxtime(a, 0x0d) ^ invxtime(b, 0x09) ^ invxtime(c, 0x0e) ^ invxtime(d, 0x0b);
-        state[i + 12] = invxtime(a, 0x0b) ^ invxtime(b, 0x0d) ^ invxtime(c, 0x09) ^ invxtime(d, 0x0e);
-    }
+    //         h = a[r] >> 7;
+    //         b[r] = a[r] << 1;
+    //         if (h) { b[r] ^= 0x1b; }
+
+    //         h = b[r] >> 7;
+    //         b[r] = b[r] << 1;
+    //         if (h) { b[r] ^= 0x1b; }
+
+    //         h = b[r] >> 7;
+    //         b[r] = b[r] << 1;
+    //         if (h) { b[r] ^= 0x1b; }
+
+    //         h = b[r] >> 7;
+    //         b[r] = b[r] << 1;
+    //         if (h) { b[r] ^= 0x1b; }
+
+    //         b[r] ^= a[r];
+    //     }
+
+    //     state[i] =      b[0] ^ a[3] ^ a[2] ^ b[1] ^ a[1];
+    //     state[i + 4] =  b[1] ^ a[0] ^ a[3] ^ b[2] ^ a[2];
+    //     state[i + 8] =  b[2] ^ a[1] ^ a[0] ^ b[3] ^ a[3];
+    //     state[i + 12] = b[3] ^ a[2] ^ a[1] ^ b[0] ^ a[0];
+    // }
 }
 
 void cipher(uint8_t* output, const uint8_t* input, const uint_256_t key) {
@@ -486,7 +521,7 @@ void cipher(uint8_t* output, const uint8_t* input, const uint_256_t key) {
     for(uint64_t round = 1; round < Nr; round++) {
         substitute_bytes(state);
         shiftrows(state);
-        //mixcolumns(state);
+        mixcolumns(state);
         add_roundkey(state, round_keys, round);
     }
 
@@ -508,7 +543,7 @@ void inv_cipher(uint8_t* output, const uint8_t* input, const uint_256_t key) {
     for (uint64_t round = Nr - 1; round > 0; round--) {
         inv_substitute_bytes(state);
         inv_shiftrows(state);
-        //inv_mixcolumns(state);
+        inv_mixcolumns(state);
         add_roundkey(state, round_keys, round);
     }
 
