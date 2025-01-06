@@ -181,11 +181,11 @@ void send_message(int connection, ct_data msg) {
     send(connection, msg.ct, msg.len, 0);
 }
 
-void recv_from_conn(void* args) {
-    int* connection = (int*)args[0];
+void* recv_from_conn(void* args) {
+    int connection = *(int*)&args[0];
 }
-void send_to_conn(void* args) {
-    int* connection = (int*)args[0];
+void* send_to_conn(void* args) {
+    int connection = *(int*)&args[0];
 }
 
 int main(int argc, char* argv[]) {
@@ -274,8 +274,10 @@ int main(int argc, char* argv[]) {
 
     pthread_t recv_thread, send_thread;
 
-    void* send_args[] = { &connection };
-    void* recv_args[] = { &connection };
+    printf("Main con: %d\n", connection);
+
+    void* send_args = { &connection };
+    void* recv_args = { &connection };
 
     pthread_create(&recv_thread, NULL, &recv_from_conn, recv_args);
     pthread_create(&send_thread, NULL, &send_to_conn, send_args);
