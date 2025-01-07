@@ -86,19 +86,67 @@ void printstrarr(stringarr* arr) {
 stringarr parse_repos(char* user, char* pat, stringarr exclude) {
     const char* CURLCMD = "curl -s -H \"Authorization: token ";
     const char* SUBSTRING = "\"url\": \"";
-    const char* URL = "https://api.github.com/users/";
-    const char* HOMEURL = "https://api.github.com/users/";
+
+    const char* URL_A = "https://api.github.com/users/";
+    const char* URL_B = "https://api.github.com/user/repos";
+
+    const char* USERCHECK = "https://api.github.com/user";
 
     char recvbuf[512];
     FILE* pipe;
 
+    int u = -1;
+
+    string usercheckcmd = { 0, (char*)malloc(0) };
+    append(&usercheckcmd, CURLCMD);
+    append(&usercheckcmd, pat);
+    append(&usercheckcmd, "\" ");
+    append(&usercheckcmd, USERCHECK);
+
+    pipe = popen(usercheckcmd.str, "r");
+
+    while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
+        char* t = strstr(recvbuf, "\"login\": \"");
+
+        if (t != NULL) {
+            size_t idx = t - recvbuf + strlen("\"login\": \"");
+            size_t eidx = strstr(&recvbuf[idx], "\"") - recvbuf;
+
+            string name = { 0, (char*)malloc(0) };
+            appendn(&name, &recvbuf[idx], eidx - idx);
+
+            if (strcmp(name.str, user) == 0) {
+                u = 1;
+            } else {
+                u = 2;
+            }
+
+            free(name.str);
+        }
+    }
+
+    free(usercheckcmd.str);
+    pclose(pipe);
+
     string finalcmd = { 0, (char*)malloc(0) };
+
     append(&finalcmd, CURLCMD);
     append(&finalcmd, pat);
     append(&finalcmd, "\" ");
-    append(&finalcmd, URL);
-    append(&finalcmd, user);
-    append(&finalcmd, "/repos");
+
+    if (u == 1) {
+        // own user, use URL_B
+        append(&finalcmd, URL_B);
+    } else if (u == 2) {
+        // other user, use URL_A
+        append(&finalcmd, URL_A);
+        append(&finalcmd, user);
+        append(&finalcmd, "/repos");
+    } else {
+        // ERROR
+        printf("ERROR\n");
+        exit(1);
+    }
 
     string html = { 0, (char*)malloc(0) };
 
@@ -118,7 +166,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude) {
     free(finalcmd.str);
 
     string home_repo = { 0, (char*)malloc(0) };
-    append(&home_repo, HOMEURL);
+    append(&home_repo, URL_A);
     append(&home_repo, user);
 
     stringarr repos = { 0, (string*)malloc(1 * sizeof(string)) };
@@ -188,7 +236,7 @@ void parse_file(LOCs* locs, string url, const char* pat, const char* fileext) {
     free(finalcmd.str);
     pclose(pipe);
 
-    size_t tmp = 0;
+    size_t tmp = 1;
 
     size_t sidx = strstr(html.str, "\"content\": \"") - html.str + strlen("\"content\": \"");
     size_t eidx = strstr(&html.str[sidx], "\"") - html.str;
@@ -352,7 +400,7 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
 
 void output_locs(LOCs* locs) {
     printf("\nLines of Code:\n");
-    if (locs->c) { printf("C: %lu\n\n", locs->c); }
+    if (locs->c) { printf("C: %lu\n", locs->c); }
     if (locs->cpp) { printf("Cpp: %lu\n", locs->cpp); }
     if (locs->h + locs->hpp) { printf("C/Cpp Headers: %lu\n", locs->h + locs->hpp); }
     if (locs->cs) { printf("C#: %lu\n", locs->cs); }
