@@ -10,33 +10,60 @@ typedef struct {
 } string;
 
 typedef struct {
-    size_t c;
-    size_t h;
-    size_t cpp;
-    size_t hpp;
-    size_t cs;
-    size_t js;
-    size_t ts;
-    size_t py;
-    size_t as;
-    size_t java;
-    size_t go;
-    size_t hlsl;
-    size_t cu;
-    size_t cuh;
-    size_t sh;
-    size_t gdb;
-    size_t html;
-    size_t md;
-    size_t lua;
-    size_t rs;
+    size_t* lines;
+
     size_t failed;
+    size_t api_requests;
 } LOCs;
+size_t locs_size;
 
 typedef struct {
     size_t elements;
     string* str;
 } stringarr;
+
+const char* supported_extensions[] = {
+    "c",
+    "cpp",
+    "h",
+    "rs",
+    "java",
+    "cs",
+    "js",
+    "ts",
+    "py",
+    "asm",
+    "go",
+    "compute",
+    "cu",
+    "cuh",
+    "sh",
+    "gdb",
+    "html",
+    "md",
+    "lua"
+};
+const char* supported_languages[] = {
+    "C",
+    "C++",
+    "C/C++ Headers",
+    "Rust",
+    "Java",
+    "C#",
+    "Javascript",
+    "Typescript",
+    "Python",
+    "Assembly",
+    "Go",
+    "Hlsl",
+    "Cuda",
+    "Cuda Headers",
+    "Shell Script",
+    "Gdb Script",
+    "Html",
+    "Markdown",
+    "Lua"
+};
 
 static const unsigned char base64_table[128] = {
     [0 ... 127] = 255,
@@ -83,7 +110,7 @@ void printstrarr(stringarr* arr) {
     }
 }
 
-stringarr parse_repos(char* user, char* pat, stringarr exclude) {
+stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
     const char* CURLCMD = "curl -s -H \"Authorization: token ";
     const char* SUBSTRING = "\"url\": \"";
 
@@ -127,6 +154,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude) {
 
     free(usercheckcmd.str);
     pclose(pipe);
+    locs->api_requests++;
 
     string finalcmd = { 0, (char*)malloc(0) };
 
@@ -164,6 +192,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude) {
 
     pclose(pipe);
     free(finalcmd.str);
+    locs->api_requests++;
 
     string home_repo = { 0, (char*)malloc(0) };
     append(&home_repo, URL_A);
@@ -204,14 +233,10 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude) {
         free(tmp.str);
     }
 
-    #if LOG
-    printstrarr(&repos);
-    #endif
-
     return repos;
 }
 
-void parse_file(LOCs* locs, string url, const char* pat, const char* fileext) {
+void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
     const char* CURLCMD = "curl -s -L -H \"Authorization: token ";
     const char* SUBSTRING = "\"html\": \"";
 
@@ -235,6 +260,7 @@ void parse_file(LOCs* locs, string url, const char* pat, const char* fileext) {
 
     free(finalcmd.str);
     pclose(pipe);
+    locs->api_requests++;
 
     size_t tmp = 1;
 
@@ -258,27 +284,7 @@ void parse_file(LOCs* locs, string url, const char* pat, const char* fileext) {
         }
     }
 
-    if (strcmp(fileext, "c") == 0) { locs->c += tmp; }
-    else if (strcmp(fileext, "h") == 0) { locs->h += tmp; }
-    else if (strcmp(fileext, "cpp") == 0) { locs->cpp += tmp; }
-    else if (strcmp(fileext, "hpp") == 0) { locs->hpp += tmp; }
-    else if (strcmp(fileext, "cs") == 0) { locs->cs += tmp; }
-    else if (strcmp(fileext, "js") == 0) { locs->js += tmp; }
-    else if (strcmp(fileext, "py") == 0) { locs->py += tmp; }
-    else if (strcmp(fileext, "asm") == 0) { locs->as += tmp; }
-    else if (strcmp(fileext, "java") == 0) { locs->java += tmp; }
-    else if (strcmp(fileext, "go") == 0) { locs->go += tmp; }
-    else if (strcmp(fileext, "compute") == 0) { locs->hlsl += tmp; }
-    else if (strcmp(fileext, "cu") == 0) { locs->cu += tmp; }
-    else if (strcmp(fileext, "cuh") == 0) { locs->cuh += tmp; }
-    else if (strcmp(fileext, "sh") == 0) { locs->sh += tmp; }
-    else if (strcmp(fileext, "gdb") == 0) { locs->gdb += tmp; }
-    else if (strcmp(fileext, "html") == 0) { locs->html += tmp; }
-    else if (strcmp(fileext, "md") == 0) { locs->md += tmp; }
-    else if (strcmp(fileext, "lua") == 0) { locs->lua += tmp; }
-    else if (strcmp(fileext, "rs") == 0) { locs->rs += tmp; }
-    else if (strcmp(fileext, "ts") == 0) { locs->ts += tmp; }
-    else { printf("ERROR PARSING EXT\n"); }
+    locs->lines[idx] += tmp;
 
     if (strstr(html.str, "\"content\": \"") == NULL)  {
         locs->failed++;
@@ -313,6 +319,7 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
 
     free(finalcmd.str);
     pclose(pipe);
+    locs->api_requests++;
 
 
     string name = { 0, (char*)malloc(0) };
@@ -344,47 +351,32 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
                 }
             }
 
-            if (
-                fileext != NULL && (
-                strcmp(fileext, "c") == 0 ||
-                strcmp(fileext, "h") == 0 ||
-                strcmp(fileext, "cpp") == 0 ||
-                strcmp(fileext, "hpp") == 0 ||
-                strcmp(fileext, "cs") == 0 ||
-                strcmp(fileext, "js") == 0 ||
-                strcmp(fileext, "py") == 0 ||
-                strcmp(fileext, "asm") == 0 ||
-                strcmp(fileext, "java") == 0 ||
-                strcmp(fileext, "go") == 0 ||
-                strcmp(fileext, "compute") == 0 ||
-                strcmp(fileext, "cu") == 0 ||
-                strcmp(fileext, "cuh") == 0 ||
-                strcmp(fileext, "sh") == 0 ||
-                strcmp(fileext, "gdb") == 0 ||
-                strcmp(fileext, "html") == 0 ||
-                strcmp(fileext, "md") == 0 ||
-                strcmp(fileext, "lua") == 0 ||
-                strcmp(fileext, "rs") == 0 ||
-                strcmp(fileext, "ts") == 0
-            )) {
-                #if LOG
-                printf("File: %s\n", name.str);
-                #endif
+            if (fileext != NULL) {
+                for(size_t i = 0; i < locs_size; i++) {
+                    if (strcmp(fileext, supported_extensions[i]) == 0) {
+                        #if LOG
+                        printf("File: %s\n", name.str);
+                        #endif
 
-                parse_file(locs, tmp_url, pat, fileext);
+                        parse_file(locs, tmp_url, pat, i);
+                        break;
+                    }
+                }  
+
+                /*
+                    additional check for hpp files, 2 -> index of h files, done here to keep consistent indexing
+                    between supported languages and supported extentions for easy output
+                */
+                if (strcmp(fileext, "hpp") == 0) {
+                    parse_file(locs, tmp_url, pat, 2);
+                }
             }
         } else if (searchstring[typeidx] == 'd') {
-
             #if LOG
             printf("Searching: %s\n", tmp_url.str);
             #endif
 
             parse_dir(locs, tmp_url, pat);
-
-            #if LOG
-            printf("Searching: %s\n", url.str);
-            #endif
-            
         } else {
             printf("ERROR READING TYPE\n");
             exit(1);
@@ -400,30 +392,19 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
 
 void output_locs(LOCs* locs) {
     printf("\nLines of Code:\n");
-    if (locs->c) { printf("C: %lu\n", locs->c); }
-    if (locs->cpp) { printf("Cpp: %lu\n", locs->cpp); }
-    if (locs->h + locs->hpp) { printf("C/Cpp Headers: %lu\n", locs->h + locs->hpp); }
-    if (locs->cs) { printf("C#: %lu\n", locs->cs); }
-    if (locs->js) { printf("Javascripts: %lu\n", locs->js); }
-    if (locs->ts) { printf("Typescript: %lu\n", locs->ts); }
-    if (locs->py) { printf("Python: %lu\n", locs->py); }
-    if (locs->as) { printf("Assembly: %lu\n", locs->as); }
-    if (locs->java) { printf("Java: %lu\n", locs->java); }
-    if (locs->go) { printf("Go: %lu\n", locs->go); }
-    if (locs->hlsl) { printf("Hlsl: %lu\n", locs->hlsl); }
-    if (locs->cu) { printf("Cuda: %lu\n", locs->cu); }
-    if (locs->cuh) { printf("Cuda Headers: %lu\n", locs->cuh); }
-    if (locs->sh) { printf("Shell: %lu\n", locs->sh); }
-    if (locs->gdb) { printf("Gdb Script: %lu\n", locs->gdb); }
-    if (locs->html) { printf("Html: %lu\n", locs->html); }
-    if (locs->md) { printf("Markdown: %lu\n", locs->md); }
-    if (locs->lua) { printf("Lua: %lu\n", locs->lua); }
-    if (locs->rs) { printf("\nRust: %lu\n", locs->rs); }
-    if (locs->failed) { printf("Failed to read: %lu files\n", locs->failed); }
+
+    for(size_t i = 0; i < locs_size; i++) {
+        if (locs->lines[i]) {
+            printf("%s: %lu\n", supported_languages[i], locs->lines[i]);
+        }
+    }
+
+    if (locs->api_requests) { printf("Made %lu Github API requests\n", locs->api_requests); }
+    if (locs->failed) { printf("Failed to read %lu files\n", locs->failed); }
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
+    if (argc < 3) {
         return 1;
     }
 
@@ -457,11 +438,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (pat == NULL) {
-        pat = "";
-    }
+    locs_size = sizeof(supported_languages) / sizeof(supported_languages[0]);
 
-    stringarr repos = parse_repos(user, pat, excluded);
+    LOCs locs;
+    memset(&locs, 0, sizeof(locs));
+    locs.lines = (size_t*)calloc(locs_size, sizeof(size_t));
+
+    stringarr repos = parse_repos(user, pat, excluded, &locs);
 
     #if LOG
     printf("Repos:\n");
@@ -469,13 +452,20 @@ int main(int argc, char* argv[]) {
     printf("\n");
     #endif
 
-    LOCs locs;
-    memset(&locs, 0, sizeof(locs));
+    string name = { 0, (char*)malloc(0) };
 
     for(size_t i = 0; i < repos.elements; i++) {
-        printf("Searching: %s\n", repos.str[i].str);
+        size_t sidx = strstr(repos.str[i].str, user) - repos.str[i].str + strlen(user) + 1;
+        size_t eidx = strstr(&repos.str[i].str[sidx], "/contents") - repos.str[i].str;
+
+        appendn(&name, &repos.str[i].str[sidx], eidx - sidx);
+
+        printf("Searching: %s\n", name.str);
+        clearstr(&name);
+
         parse_dir(&locs, repos.str[i], pat);
     }
 
+    free(name.str);
     output_locs(&locs);
 }
