@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #define LOG 0
+#define BUFFER_SIZE 4096
 
 typedef struct {
     size_t len;
@@ -125,7 +126,7 @@ void feedback(const char* pat) {
     append(&fcmd, "\" \"");
     append(&fcmd, "https://api.github.com/user");
 
-    char recvbuf[512];
+    char recvbuf[BUFFER_SIZE];
     FILE* pipe;
 
     string html = { 0, (char*)malloc(0) };
@@ -136,7 +137,7 @@ void feedback(const char* pat) {
 
         while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
             append(&html, recvbuf);
-            memset(recvbuf, 0, 512);
+            memset(recvbuf, 0, sizeof(recvbuf));
         }
 
         pclose(pipe);
@@ -160,7 +161,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
 
     const char* USERCHECK = "https://api.github.com/user";
 
-    char recvbuf[512];
+    char recvbuf[BUFFER_SIZE];
     FILE* pipe;
 
     int u = -1;
@@ -281,12 +282,14 @@ void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
     const char* CURLCMD = "curl -s -L -H \"Authorization: token ";
     const char* SUBSTRING = "\"html\": \"";
 
-    char recvbuf[512];
+    int retried = 0;
+
+    char recvbuf[BUFFER_SIZE];
     FILE* pipe;
 
     start_f:
 
-    string finalcmd = { 0, (char*)malloc(1) };
+    string finalcmd = { 0, (char*)malloc(0) };
     append(&finalcmd, CURLCMD);
     append(&finalcmd, pat);
     append(&finalcmd, "\" \"");
@@ -298,7 +301,7 @@ void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
     pipe = popen(finalcmd.str, "r");
     while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
         append(&html, recvbuf);
-        memset(recvbuf, 0, 512);
+        memset(recvbuf, 0, sizeof(recvbuf));
     }
 
     free(finalcmd.str);
@@ -330,17 +333,21 @@ void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
         }
 
         locs->lines[idx] += tmp;
+        free(html.str);
     } else {
+        free(html.str);
+
         if (strstr(html.str, "API rate limit exceeded") != NULL) {
             feedback(pat);
+            goto start_f;
+        } else if (!retried) {
+            retried++;
             goto start_f;
         }
         printf("SUBSTRING NOT FOUND\n");
         printf("%s\n", html.str);
         locs->failed++;
     }
-    
-    free(html.str);
 }
 void parse_dir(LOCs* locs, string url, const char* pat) {
     const char* CURLCMD = "curl -s -L -H \"Authorization: token ";
@@ -348,7 +355,9 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
     const char* URLSUBSTRING = "\"url\": \"";
     const char* TYPESUBSTRING = "\"type\": \"";
 
-    char recvbuf[512];
+    int retried = 0;
+
+    char recvbuf[BUFFER_SIZE];
     FILE* pipe;
 
     start_d:
@@ -366,7 +375,7 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
 
     while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
         append(&html, recvbuf);
-        memset(recvbuf, 0, 512);
+        memset(recvbuf, 0, sizeof(recvbuf));
     }
 
     free(finalcmd.str);
@@ -439,17 +448,24 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
         }
         
         free(name.str);
+        free(html.str);
     } else {
+        free(html.str);
+
         if (strstr(html.str, "API rate limit exceeded") != NULL) {
             feedback(pat);
             goto start_d;
+        } else if (strstr(html.str, "This repository is empty") != NULL) {
+            return;
+        } else if (!retried) {
+            retried++;
+            goto start_d;
         }
+
         printf("SUBSTRING NOT FOUND\n");
-        printf("%s\n", html.str);
+        printf("%s\n%s\n", html.str, url.str);
         locs->failed++;
     }
-
-    free(html.str);
 }
 
 void output_locs(LOCs* locs) {
