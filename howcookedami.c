@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <unistd.h>
 
 #define LOG 0
 
@@ -41,7 +43,8 @@ const char* supported_extensions[] = {
     "gdb",
     "html",
     "md",
-    "lua"
+    "lua",
+    "php"
 };
 const char* supported_languages[] = {
     "C",
@@ -62,7 +65,8 @@ const char* supported_languages[] = {
     "Gdb Script",
     "Html",
     "Markdown",
-    "Lua"
+    "Lua",
+    "PHP"
 };
 
 static const unsigned char base64_table[128] = {
@@ -80,6 +84,8 @@ static const unsigned char base64_table[128] = {
     ['2'] = 54, ['3'] = 55, ['4'] = 56, ['5'] = 57, ['6'] = 58, ['7'] = 59,
     ['8'] = 60, ['9'] = 61, ['+'] = 62, ['/'] = 63
 };
+
+LOCs g_locs;
 
 void append(string* str, const char* data) {
     str->str = realloc(str->str, str->len + strlen(data) + 1);
@@ -108,6 +114,41 @@ void printstrarr(stringarr* arr) {
     for(size_t i = 0; i < arr->elements; i++) {
         printf("%s\n", arr->str[i].str);
     }
+}
+
+void feedback(const char* pat) {
+    const char* CMD = "curl -s -L -H \"Authorization: token ";
+
+    string fcmd = { 0, (char*)malloc(0) };
+    append(&fcmd, CMD);
+    append(&fcmd, pat);
+    append(&fcmd, "\" \"");
+    append(&fcmd, "https://api.github.com/user");
+
+    char recvbuf[512];
+    FILE* pipe;
+
+    string html = { 0, (char*)malloc(0) };
+
+    while(1) {
+        printf("Trying request...\n");
+        pipe = popen(fcmd.str, "r");
+
+        while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
+            append(&html, recvbuf);
+            memset(recvbuf, 0, 512);
+        }
+
+        pclose(pipe);
+
+        if (strstr(html.str, "API rate limit exceeded") == NULL) {
+            printf("Request succeeded, continuing\n");
+            break;
+        }
+
+        clearstr(&html);
+        sleep(30);
+    }    
 }
 
 stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
@@ -172,7 +213,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
         append(&finalcmd, "/repos");
     } else {
         // ERROR
-        printf("ERROR\n");
+        printf("ERROR GETTING USER\n");
         exit(1);
     }
 
@@ -243,6 +284,8 @@ void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
     char recvbuf[512];
     FILE* pipe;
 
+    start_f:
+
     string finalcmd = { 0, (char*)malloc(1) };
     append(&finalcmd, CURLCMD);
     append(&finalcmd, pat);
@@ -260,36 +303,43 @@ void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
 
     free(finalcmd.str);
     pclose(pipe);
-    locs->api_requests++;
 
-    size_t tmp = 1;
+    if (strstr(html.str, "\"content\": \"") != NULL) {
+        locs->api_requests++;
 
-    size_t sidx = strstr(html.str, "\"content\": \"") - html.str + strlen("\"content\": \"");
-    size_t eidx = strstr(&html.str[sidx], "\"") - html.str;
-    size_t len = eidx - sidx;
+        size_t tmp = 1;
 
-    char* searchstring = &html.str[sidx];
-    for(size_t i = 0, j = 0; i < len;) {
-        if(searchstring[i] == '\\' && searchstring[i + 1] == 'n') {
-            i += 2;
-        } else {
-            int val = base64_table[searchstring[i++]] << 18;
-            val |= base64_table[searchstring[i++]] << 12;
-            val |= base64_table[searchstring[i++]] << 6;
-            val |= base64_table[searchstring[i++]];
+        size_t sidx = strstr(html.str, "\"content\": \"") - html.str + strlen("\"content\": \"");
+        size_t eidx = strstr(&html.str[sidx], "\"") - html.str;
+        size_t len = eidx - sidx;
 
-            if ((char)(val >> 16) == '\n') { tmp++; }
-            if ((char)(val >> 8) == '\n') { tmp++; }
-            if ((char)(val & 0xff) == '\n') { tmp++; }
+        char* searchstring = &html.str[sidx];
+        for(size_t i = 0, j = 0; i < len;) {
+            if(searchstring[i] == '\\' && searchstring[i + 1] == 'n') {
+                i += 2;
+            } else {
+                int val = base64_table[searchstring[i++]] << 18;
+                val |= base64_table[searchstring[i++]] << 12;
+                val |= base64_table[searchstring[i++]] << 6;
+                val |= base64_table[searchstring[i++]];
+
+                if ((char)(val >> 16) == '\n') { tmp++; }
+                if ((char)(val >> 8) == '\n') { tmp++; }
+                if ((char)(val & 0xff) == '\n') { tmp++; }
+            }
         }
-    }
 
-    locs->lines[idx] += tmp;
-
-    if (strstr(html.str, "\"content\": \"") == NULL)  {
+        locs->lines[idx] += tmp;
+    } else {
+        if (strstr(html.str, "API rate limit exceeded") != NULL) {
+            feedback(pat);
+            goto start_f;
+        }
+        printf("SUBSTRING NOT FOUND\n");
+        printf("%s\n", html.str);
         locs->failed++;
     }
-
+    
     free(html.str);
 }
 void parse_dir(LOCs* locs, string url, const char* pat) {
@@ -301,7 +351,9 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
     char recvbuf[512];
     FILE* pipe;
 
-    string finalcmd = { 0, (char*)malloc(1) };
+    start_d:
+
+    string finalcmd = { 0, (char*)malloc(0) };
     append(&finalcmd, CURLCMD);
     append(&finalcmd, pat);
     append(&finalcmd, "\" \"");
@@ -319,75 +371,85 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
 
     free(finalcmd.str);
     pclose(pipe);
-    locs->api_requests++;
 
+    if (strstr(html.str, NAMESUBSTRING) != NULL) {
+        locs->api_requests++;
+        string name = { 0, (char*)malloc(0) };
 
-    string name = { 0, (char*)malloc(0) };
+        char* searchstring = html.str;
+        while ((searchstring = strstr(searchstring, NAMESUBSTRING)) != NULL) {
+            searchstring += strlen(NAMESUBSTRING);
 
-    char* searchstring = html.str;
-    while ((searchstring = strstr(searchstring, NAMESUBSTRING)) != NULL) {
-        searchstring += strlen(NAMESUBSTRING);
+            size_t idx = searchstring - html.str;
+            size_t eidx = strstr(searchstring, "\"") - html.str;
 
-        size_t idx = searchstring - html.str;
-        size_t eidx = strstr(searchstring, "\"") - html.str;
+            appendn(&name, searchstring, eidx - idx);
 
-        appendn(&name, searchstring, eidx - idx);
+            size_t urlidx = strstr(searchstring, URLSUBSTRING) - searchstring + strlen(URLSUBSTRING);
+            size_t eurlidx = strstr(&searchstring[urlidx], "\"") - searchstring;
 
-        size_t urlidx = strstr(searchstring, URLSUBSTRING) - searchstring + strlen(URLSUBSTRING);
-        size_t eurlidx = strstr(&searchstring[urlidx], "\"") - searchstring;
+            string tmp_url = { 0, (char*)malloc(0) };
+            appendn(&tmp_url, &searchstring[urlidx], eurlidx - urlidx);
 
-        string tmp_url = { 0, (char*)malloc(1) };
-        appendn(&tmp_url, &searchstring[urlidx], eurlidx - urlidx);
+            size_t typeidx = strstr(searchstring, TYPESUBSTRING) - searchstring + strlen(TYPESUBSTRING);
 
-        size_t typeidx = strstr(searchstring, TYPESUBSTRING) - searchstring + strlen(TYPESUBSTRING);
-
-        if (searchstring[typeidx] == 'f') {
+            if (searchstring[typeidx] == 'f') {
             
-            char* fileext = name.str;
-            while((fileext = strstr(fileext, ".")) != NULL) {
-                fileext += strlen(".");
-                if (strstr(fileext, ".") == NULL) {
-                    break;
-                }
-            }
-
-            if (fileext != NULL) {
-                for(size_t i = 0; i < locs_size; i++) {
-                    if (strcmp(fileext, supported_extensions[i]) == 0) {
-                        #if LOG
-                        printf("File: %s\n", name.str);
-                        #endif
-
-                        parse_file(locs, tmp_url, pat, i);
+                char* fileext = name.str;
+                while((fileext = strstr(fileext, ".")) != NULL) {
+                    fileext += strlen(".");
+                    if (strstr(fileext, ".") == NULL) {
                         break;
                     }
-                }  
-
-                /*
-                    additional check for hpp files, 2 -> index of h files, done here to keep consistent indexing
-                    between supported languages and supported extentions for easy output
-                */
-                if (strcmp(fileext, "hpp") == 0) {
-                    parse_file(locs, tmp_url, pat, 2);
                 }
+
+                if (fileext != NULL) {
+                    for(size_t i = 0; i < locs_size; i++) {
+                        if (strcmp(fileext, supported_extensions[i]) == 0) {
+                            #if LOG
+                            printf("File: %s\n", name.str);
+                            #endif
+
+                            parse_file(locs, tmp_url, pat, i);
+                            break;
+                        }
+                    }  
+
+                    /*
+                        additional check for hpp files, 2 -> index of h files, done here to keep consistent indexing
+                        between supported languages and supported extentions for easy output
+                    */
+                    if (strcmp(fileext, "hpp") == 0) {
+                        parse_file(locs, tmp_url, pat, 2);
+                    }
+                }
+            } else if (searchstring[typeidx] == 'd') {
+                #if LOG
+                printf("Searching: %s\n", tmp_url.str);
+                #endif
+
+                parse_dir(locs, tmp_url, pat);
+            } else {
+                printf("ERROR READING TYPE\n");
+                exit(1);
             }
-        } else if (searchstring[typeidx] == 'd') {
-            #if LOG
-            printf("Searching: %s\n", tmp_url.str);
-            #endif
 
-            parse_dir(locs, tmp_url, pat);
-        } else {
-            printf("ERROR READING TYPE\n");
-            exit(1);
+            free(tmp_url.str);
+            clearstr(&name);        
         }
-
-        free(tmp_url.str);
-        clearstr(&name);        
+        
+        free(name.str);
+    } else {
+        if (strstr(html.str, "API rate limit exceeded") != NULL) {
+            feedback(pat);
+            goto start_d;
+        }
+        printf("SUBSTRING NOT FOUND\n");
+        printf("%s\n", html.str);
+        locs->failed++;
     }
 
     free(html.str);
-    free(name.str);
 }
 
 void output_locs(LOCs* locs) {
@@ -400,7 +462,12 @@ void output_locs(LOCs* locs) {
     }
 
     if (locs->api_requests) { printf("Made %lu Github API requests\n", locs->api_requests); }
-    if (locs->failed) { printf("Failed to read %lu files\n", locs->failed); }
+    if (locs->failed) { printf("Failed to read %lu files and/or directories\n", locs->failed); }
+}
+void sigint_handle(int sig) {
+    printf("\nProgram Interrupt:\n");
+    output_locs(&g_locs);
+    exit(1);
 }
 
 int main(int argc, char* argv[]) {
@@ -440,11 +507,16 @@ int main(int argc, char* argv[]) {
 
     locs_size = sizeof(supported_languages) / sizeof(supported_languages[0]);
 
-    LOCs locs;
-    memset(&locs, 0, sizeof(locs));
-    locs.lines = (size_t*)calloc(locs_size, sizeof(size_t));
+    memset(&g_locs, 0, sizeof(g_locs));
+    g_locs.lines = (size_t*)calloc(locs_size, sizeof(size_t));
 
-    stringarr repos = parse_repos(user, pat, excluded, &locs);
+    // setup function to handle interrupts
+    if (signal(SIGINT, sigint_handle) == SIG_ERR) {
+        perror("Error setting up signal handler");
+        return 1;
+    }
+
+    stringarr repos = parse_repos(user, pat, excluded, &g_locs);
 
     #if LOG
     printf("Repos:\n");
@@ -454,6 +526,7 @@ int main(int argc, char* argv[]) {
 
     string name = { 0, (char*)malloc(0) };
 
+    // start search on each repo in repos
     for(size_t i = 0; i < repos.elements; i++) {
         size_t sidx = strstr(repos.str[i].str, user) - repos.str[i].str + strlen(user) + 1;
         size_t eidx = strstr(&repos.str[i].str[sidx], "/contents") - repos.str[i].str;
@@ -463,9 +536,9 @@ int main(int argc, char* argv[]) {
         printf("Searching: %s\n", name.str);
         clearstr(&name);
 
-        parse_dir(&locs, repos.str[i], pat);
+        parse_dir(&g_locs, repos.str[i], pat);
     }
 
     free(name.str);
-    output_locs(&locs);
+    output_locs(&g_locs);
 }
