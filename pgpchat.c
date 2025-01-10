@@ -181,13 +181,6 @@ void send_message(int connection, ct_data msg) {
     send(connection, msg.ct, msg.len, 0);
 }
 
-void* recv_from_conn(void* args) {
-    int connection = *(int*)&args[0];
-}
-void* send_to_conn(void* args) {
-    int connection = *(int*)&args[0];
-}
-
 int main(int argc, char* argv[]) {
     srand(time(0));
 
@@ -253,38 +246,30 @@ int main(int argc, char* argv[]) {
     printf("DHKE Complete\n\n");
     #endif
 
-    ct_data text;
+    // client expected to make first message
     if (hosting) {
-        text.ct = "Hello client... how are you this wonderful morning? It's been a long day of debugging this stupid aes stuff for me :/\x00";
-    } else {
-        text.ct = "Hello server... im doing great :) tysm, yeah I get you, it's definitely a little finicky, especially that mix columns stuff\x00";
+        ct_data rct = recv_message(connection);
+        ct_data pt = decrypt(rct, shared_key);
+        printf("Connection: %s", pt.ct);
     }
-    text.len = strlen(text.ct);
 
-    // // main loop for communicating, at this point client and server are connected and can send data
-    // while(1) {
-    //     ct_data ct = encrypt(text, shared_key);
-    //     send_message(connection, ct);
+    ct_data text;
+    char recvbuf[512];
 
-    //     ct_data rct = recv_message(connection);
-    //     ct_data pt = decrypt(rct, shared_key);
+    // main loop for communicating, at this point client and server are connected and can send data
+    while(1) {
+        printf("You: ");
+        fgets(recvbuf, 512, stdin);
+        text.ct = recvbuf;
+        text.len = strlen(recvbuf);
+        ct_data ct = encrypt(text, shared_key);
+        send_message(connection, ct);
 
-    //     printf("Recieved message:\n%s\n\n", pt.ct);
-    // }
+        ct_data rct = recv_message(connection);
+        ct_data pt = decrypt(rct, shared_key);
 
-    pthread_t recv_thread, send_thread;
-
-    printf("Main con: %d\n", connection);
-
-    void* send_args = { &connection };
-    void* recv_args = { &connection };
-
-    pthread_create(&recv_thread, NULL, &recv_from_conn, recv_args);
-    pthread_create(&send_thread, NULL, &send_to_conn, send_args);
-
-    pthread_join(recv_thread, NULL);
-    pthread_join(send_thread, NULL);
-    
+        printf("Connection: %s", pt.ct);
+    }
 }
 
 uint_256_t dhke_handshake(int connection) {
