@@ -124,7 +124,7 @@ void feedback(const char* pat) {
     append(&fcmd, CMD);
     append(&fcmd, pat);
     append(&fcmd, "\" \"");
-    append(&fcmd, "https://api.github.com/user");
+    append(&fcmd, "https://api.github.com/user\"");
 
     char recvbuf[BUFFER_SIZE];
     FILE* pipe;
