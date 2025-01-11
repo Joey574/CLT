@@ -123,8 +123,7 @@ void feedback(const char* pat) {
     string fcmd = { 0, (char*)malloc(0) };
     append(&fcmd, CMD);
     append(&fcmd, pat);
-    append(&fcmd, "\" \"");
-    append(&fcmd, "https://api.github.com/user\"");
+    append(&fcmd, "\" \"https://api.github.com/user\"");
 
     char recvbuf[BUFFER_SIZE];
     FILE* pipe;
@@ -143,12 +142,12 @@ void feedback(const char* pat) {
         pclose(pipe);
 
         if (strstr(html.str, "API rate limit exceeded") == NULL) {
-            printf("Request succeeded, continuing\n");
+            printf("Request succeeded: continuing\n");
             break;
         }
 
         clearstr(&html);
-        sleep(30);
+        sleep(120);
     }    
 }
 
@@ -335,17 +334,21 @@ void parse_file(LOCs* locs, string url, const char* pat, size_t idx) {
         locs->lines[idx] += tmp;
         free(html.str);
     } else {
-        free(html.str);
-
         if (strstr(html.str, "API rate limit exceeded") != NULL) {
+            free(html.str);
             feedback(pat);
             goto start_f;
         } else if (!retried) {
             retried++;
+            free(html.str);
+            printf("Unknown error, sleeping then retrying\n");
+            sleep(5);
             goto start_f;
         }
+
         printf("SUBSTRING NOT FOUND\n");
-        printf("%s\n", html.str);
+        printf("%s\n%s\n", html.str, url.str);
+        free(html.str);
         locs->failed++;
     }
 }
@@ -450,20 +453,24 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
         free(name.str);
         free(html.str);
     } else {
-        free(html.str);
-
         if (strstr(html.str, "API rate limit exceeded") != NULL) {
+            free(html.str);
             feedback(pat);
             goto start_d;
         } else if (strstr(html.str, "This repository is empty") != NULL) {
+            free(html.str);
             return;
         } else if (!retried) {
             retried++;
+            free(html.str);
+            printf("Unknown error, sleeping then retrying\n");
+            sleep(5);
             goto start_d;
         }
 
         printf("SUBSTRING NOT FOUND\n");
         printf("%s\n%s\n", html.str, url.str);
+        free(html.str);
         locs->failed++;
     }
 }
@@ -471,12 +478,15 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
 void output_locs(LOCs* locs) {
     printf("\nLines of Code:\n");
 
+    size_t total = 0;
     for(size_t i = 0; i < locs_size; i++) {
         if (locs->lines[i]) {
+            total += locs->lines[i];
             printf("%s: %lu\n", supported_languages[i], locs->lines[i]);
         }
     }
 
+    if (total) { printf("Total Lines: %lu\n", total); }
     if (locs->api_requests) { printf("Made %lu Github API requests\n", locs->api_requests); }
     if (locs->failed) { printf("Failed to read %lu files and/or directories\n", locs->failed); }
 }
