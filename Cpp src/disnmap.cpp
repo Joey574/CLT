@@ -5,15 +5,16 @@
 #include <cstring>
 #include <fcntl.h>
 #include <vector>
-#include <algorithm>
+#include <sys/poll.h>
+#include <chrono>
 
-#define DEBUG 1
+#define DEBUG 0
 
 inline void success(const std::string&, int);
 inline std::string as_ip(int, int, int, int);
 
-void scan_port_tcp(const std::string& ip, int port, std::vector<int>& fd, std::vector<int>& p);
-void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<int>&, std::vector<int>&));
+void scan_port_tcp(const std::string& ip, int port, std::vector<struct pollfd>& fd, std::vector<int>& p);
+void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<struct pollfd>&, std::vector<int>&));
 
 
 inline void success(const std::string& ip, int port) {
@@ -24,7 +25,7 @@ inline std::string as_ip(int a, int b, int c, int d) {
 }
 
 
-void scan_port_tcp(const std::string& ip, int port, std::vector<int>& fd, std::vector<int>& p) {
+void scan_port_tcp(const std::string& ip, int port, std::vector<struct pollfd>& poll_fds, std::vector<int>& p) {
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sockfd < 0) {
@@ -51,79 +52,77 @@ void scan_port_tcp(const std::string& ip, int port, std::vector<int>& fd, std::v
         close(sockfd);
     } else if (result == -1 && errno == EINPROGRESS) {
         // in progress
-        fd.push_back(sockfd);
+
+        struct pollfd pfd;
+        pfd.fd = sockfd;
+        pfd.events = POLLOUT;
+        pfd.revents = 0;
+        poll_fds.push_back(pfd);
+
         p.push_back(port);
     }
 }
 
-void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<int>&, std::vector<int>&)) {
-    std::vector<int> fd;
+void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<struct pollfd>&, std::vector<int>&)) {
+    std::vector<struct pollfd> poll_fds;
     std::vector<int> port;
 
     // reserve space for up to n ports we scan
-    fd.reserve(1500);
-    port.reserve(1500);
+    poll_fds.reserve(5000);
+    port.reserve(5000);
 
     // scan n ports
-    for (size_t i = 0; i < 1500; i++) {
-        scan_type(ip, i, fd, port);
+    for (size_t i = 0; i < 5000; i++) {
+        scan_type(ip, i, poll_fds, port);
     }
 
-    // Set timeout: { seconds, microseconds }
-    struct timeval timeout = {1, 0};
+    // timeout in ms
+    int ret = poll(poll_fds.data(), poll_fds.size(), 500);
 
-    size_t elem = 0;
-    size_t iterations = (fd.size() / FD_SETSIZE) + 1;
-    for(size_t it = 0; it < iterations; it++) {
-        fd_set write_fds;
-        FD_ZERO(&write_fds);
-        int max_fd = 0;
+    if (ret == -1) {
+        perror("poll");
+        return;
+    } else {
+        for (size_t i = 0; i < poll_fds.size(); i++) {
+            if (poll_fds[i].revents & POLLOUT) {
+                int error = 0;
+                socklen_t len = sizeof(error);
 
-        size_t added = 0;
-        for(; added < FD_SETSIZE && elem < fd.size(); elem++, added++) {
-            FD_SET(fd[elem], &write_fds);
-            max_fd = std::max(max_fd, fd[elem]);
-        }
-
-        int r = select(max_fd + 1, NULL, &write_fds, NULL, &timeout);
-        if (r < 0) {
-            std::cerr << "select() failed: " << strerror(errno) << "\n";
-            return;
-        }
-
-        for (size_t i = 0; i < added; i++) {
-            size_t idx = i + elem - added;
-
-            if (FD_ISSET(fd[idx], &write_fds)) {
-                int so_error;
-                socklen_t len = sizeof(so_error);
-
-                if (getsockopt(fd[idx], SOL_SOCKET, SO_ERROR, &so_error, &len) == 0 && so_error == 0) {
-                    success(ip, port[idx]);
+                if (getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+                    success(ip, port[i]);
                 }
             }
-
-            close(fd[idx]);
         }
-    }      
+    }
+
+    // close 'er up
+    for(size_t i = 0; i < poll_fds.size(); i++) {
+        close(poll_fds[i].fd);
+    }
 }
 
 
 int main(int argc, char* argv[]) {
 
-    int a = 127;
-    int b = 0;
-    int c = 0;
+    auto start = std::chrono::high_resolution_clock::now();
 
-    //#pragma omp parallel for
-    for (int d = 0; d < 256; d++) {
-        std::string ip = as_ip(a, b, c, d);
+    int a = 10;
+    int b = 12;
 
-        #if DEBUG
-        std::string o = "Scanning " + ip + "\n";
-        std::cout << o;
-        #endif
+    #pragma omp parallel for collapse(2)
+    for (int c = 0; c < 256; c++) {
+        for (int d = 0; d < 256; d++) {
+            std::string ip = as_ip(a, b, c, d);
 
-        scan_ip(ip, &scan_port_tcp);
+            #if DEBUG
+            std::string o = "Scanning " + ip + "\n";
+            std::cout << o;
+            #endif
+
+            scan_ip(ip, &scan_port_tcp);
+        }
     }
+    
+    auto dur = std::chrono::high_resolution_clock::now() - start;
+    std::cout << dur.count() / 1000000.00 << "ms\n";
 }
