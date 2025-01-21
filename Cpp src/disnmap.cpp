@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <vector>
+#include <algorithm>
 
 #define DEBUG 1
 
@@ -59,45 +60,60 @@ void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, 
     std::vector<int> fd;
     std::vector<int> port;
 
-    for(size_t i = 0; i < 1500; i++) {
+    // reserve space for up to n ports we scan
+    fd.reserve(1500);
+    port.reserve(1500);
+
+    // scan n ports
+    for (size_t i = 0; i < 1500; i++) {
         scan_type(ip, i, fd, port);
-    }
-
-    fd_set write_fds;
-    FD_ZERO(&write_fds);
-    int max_fd = 0;
-
-    for (size_t i = 0; i < fd.size(); i++) {
-        FD_SET(fd[i], &write_fds);
-        max_fd = fd[i] > max_fd ? fd[i] : max_fd;
     }
 
     // Set timeout: { seconds, microseconds }
     struct timeval timeout = {1, 0};
-    select(max_fd + 1, NULL, &write_fds, NULL, &timeout);
 
-    for (size_t i = 0; i < fd.size(); i++) {
-        if (FD_ISSET(fd[i], &write_fds)) {
-            int so_error;
-            socklen_t len = sizeof(so_error);
+    size_t elem = 0;
+    size_t iterations = (fd.size() / FD_SETSIZE) + 1;
+    for(size_t it = 0; it < iterations; it++) {
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        int max_fd = 0;
 
-            if (getsockopt(fd[i], SOL_SOCKET, SO_ERROR, &so_error, &len) == 0 && so_error == 0) {
-                success(ip, port[i]);
-            }
-            close(fd[i]);
-        } else {
-            close(fd[i]);
+        size_t added = 0;
+        for(; added < FD_SETSIZE && elem < fd.size(); elem++, added++) {
+            FD_SET(fd[elem], &write_fds);
+            max_fd = std::max(max_fd, fd[elem]);
         }
-    }
-    std::cout << "out\n";
+
+        int r = select(max_fd + 1, NULL, &write_fds, NULL, &timeout);
+        if (r < 0) {
+            std::cerr << "select() failed: " << strerror(errno) << "\n";
+            return;
+        }
+
+        for (size_t i = 0; i < added; i++) {
+            size_t idx = i + elem - added;
+
+            if (FD_ISSET(fd[idx], &write_fds)) {
+                int so_error;
+                socklen_t len = sizeof(so_error);
+
+                if (getsockopt(fd[idx], SOL_SOCKET, SO_ERROR, &so_error, &len) == 0 && so_error == 0) {
+                    success(ip, port[idx]);
+                }
+            }
+
+            close(fd[idx]);
+        }
+    }      
 }
 
 
 int main(int argc, char* argv[]) {
 
-    int a = 192;
-    int b = 168;
-    int c = 4;
+    int a = 127;
+    int b = 0;
+    int c = 0;
 
     //#pragma omp parallel for
     for (int d = 0; d < 256; d++) {
