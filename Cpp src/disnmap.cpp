@@ -7,19 +7,38 @@
 #include <vector>
 #include <sys/poll.h>
 #include <chrono>
+#include <fstream>
 
-#define DEBUG 0
+#define LOG 0
 
-inline void success(const std::string&, int);
-inline std::string as_ip(int, int, int, int);
-
-void scan_port_tcp(const std::string& ip, int port, std::vector<struct pollfd>& fd, std::vector<int>& p);
-void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<struct pollfd>&, std::vector<int>&));
+#if LOG
+std::ofstream log_file;
+#endif
 
 
-inline void success(const std::string& ip, int port) {
-    std::cout << "Port " << port << " is open on " << ip << "\n";
-}
+struct host {
+    std::string ip;
+    std::vector<int> ports;
+};
+
+struct output_data {
+    std::vector<host> active;
+
+    std::string toString() {
+        std::string o = "Hosts up: " + std::to_string(active.size()) + "\n\n";
+
+        for (size_t i = 0; i < active.size(); i++) {
+            o.append("Host ").append(std::to_string(i)).append(": ").append(active[i].ip).append("\n");
+            for(size_t k = 0; k < active[i].ports.size(); k++) {
+                o.append("\tPort ").append(std::to_string(active[i].ports[k])).append(": OPEN\n");
+            }
+        }
+
+        return o;
+    }
+};
+
+
 inline std::string as_ip(int a, int b, int c, int d) {
     return std::to_string(a).append(".").append(std::to_string(b)).append(".").append(std::to_string(c)).append(".").append(std::to_string(d));
 }
@@ -43,16 +62,11 @@ void scan_port_tcp(const std::string& ip, int port, std::vector<struct pollfd>& 
 
     int result = connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
 
-    if (result == 0) {
-        // success
-        success(ip, port);
-        close(sockfd);
-    } else if (result == -1 && errno != EINPROGRESS) {
+    if (result == -1 && errno != EINPROGRESS) {
         // failure
         close(sockfd);
-    } else if (result == -1 && errno == EINPROGRESS) {
+    } else {
         // in progress
-
         struct pollfd pfd;
         pfd.fd = sockfd;
         pfd.events = POLLOUT;
@@ -63,9 +77,10 @@ void scan_port_tcp(const std::string& ip, int port, std::vector<struct pollfd>& 
     }
 }
 
-void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<struct pollfd>&, std::vector<int>&)) {
+void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, std::vector<struct pollfd>&, std::vector<int>&), output_data& data) {
     std::vector<struct pollfd> poll_fds;
     std::vector<int> port;
+    host h; h.ip = ip;
 
     // reserve space for up to n ports we scan
     poll_fds.reserve(5000);
@@ -89,15 +104,25 @@ void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, 
                 socklen_t len = sizeof(error);
 
                 if (getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
-                    success(ip, port[i]);
+
+                    #if LOG
+                    std::string o = "Port " + std::to_string(port[i]) + " is open on " + ip + "\n";
+                    log_file << o;
+                    #endif
+
+                    h.ports.push_back(port[i]);
                 }
             }
         }
     }
 
-    // close 'er up
+    // close fds
     for(size_t i = 0; i < poll_fds.size(); i++) {
         close(poll_fds[i].fd);
+    }
+
+    if (h.ports.size() > 0) {
+        data.active.push_back(h);
     }
 }
 
@@ -106,23 +131,35 @@ int main(int argc, char* argv[]) {
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    int a = 10;
-    int b = 12;
+    #if LOG
+    log_file = std::ofstream("log", std::ios::trunc);
+    #endif
+
+    output_data data;
+
+    int a = 192;
+    int b = 168;
 
     #pragma omp parallel for collapse(2)
-    for (int c = 0; c < 256; c++) {
+    for (int c = 240; c < 256; c++) {
         for (int d = 0; d < 256; d++) {
             std::string ip = as_ip(a, b, c, d);
 
-            #if DEBUG
+            #if LOG
             std::string o = "Scanning " + ip + "\n";
-            std::cout << o;
+            log_file << o;
             #endif
 
-            scan_ip(ip, &scan_port_tcp);
+            scan_ip(ip, &scan_port_tcp, data);
         }
     }
     
+    #if LOG
+    log_file.close();
+    #endif
+
+    std::cout << data.toString();
+
     auto dur = std::chrono::high_resolution_clock::now() - start;
-    std::cout << dur.count() / 1000000.00 << "ms\n";
+    std::cout << dur.count() / 1000000000.00 << " seconds\n";
 }
