@@ -213,7 +213,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
         append(&finalcmd, "/repos");
     } else {
         // ERROR
-        printf("ERROR GETTING USER\n");
+        printf("ERROR GETTING USER\n%s", recvbuf);
         exit(1);
     }
 
