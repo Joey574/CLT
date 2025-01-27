@@ -9,6 +9,7 @@
 #include <chrono>
 #include <fstream>
 #include <sstream>
+#include <set>
 
 #define LOG 1
 
@@ -84,59 +85,72 @@ void scan_port_tcp(const std::string& ip, int port, int idx, std::vector<struct 
 }
 
 void scan_ip(const std::string& ip, void (*scan_type) (const std::string&, int, int, std::vector<struct pollfd>&, std::vector<int>&), output_data& data) {
-    std::vector<struct pollfd> poll_fds = std::vector<struct pollfd>(5000);
-    std::vector<int> ports = std::vector<int>(5000, -1);
     host h; h.ip = ip;
 
-    // scan n ports
-    #pragma omp parallel for
-    for (size_t i = 0; i < 5000; i++) {
-        scan_type(ip, i, i, poll_fds, ports);
-    }
+    // outer iteration attempt look
+    for (size_t it = 0; it < 5 && h.ports.size() == 0; it++) {
+        std::vector<struct pollfd> poll_fds = std::vector<struct pollfd>(1000);
+        std::vector<int> ports = std::vector<int>(1000, -1);
 
-    // remove any unused spots
-    size_t aidx = 0;
-    for (size_t i = 0; i < poll_fds.size(); i++) {
-        if (ports[i] != -1) {
-            // move forward to earliest available spot
-            poll_fds[aidx] = poll_fds[i];
-            ports[aidx] = ports[i];
-            aidx++;
+        // scan n ports
+        #pragma omp parallel for
+        for (size_t i = 0; i < 1000; i++) {
+            scan_type(ip, i, i, poll_fds, ports);
         }
-    }
-    poll_fds.resize(aidx);
-    ports.resize(aidx);
 
-    // timeout in ms
-    int ret = poll(poll_fds.data(), poll_fds.size(), 5000);
+        /*
+    
+        Ok so, a lot of work needs to be done here, for example, if a given ip responds to at least one request, we should retry other requests
+        as it's possible, if not incredibly likely some got dropped
 
-    if (ret == -1) {
-        // poll error, really bad
-        perror("poll");
-        return;
-    } else {
-        // check for fds we can write to
+        On top of that, if we find an active host, we should expand our search range, looking through more ports
+    
+        */
+
+        // remove any unused spots
+        size_t aidx = 0;
         for (size_t i = 0; i < poll_fds.size(); i++) {
-            if (poll_fds[i].revents & POLLOUT) {
-                int error = 0;
-                socklen_t len = sizeof(error);
+            if (ports[i] != -1) {
+                // move forward to earliest available spot
+                poll_fds[aidx] = poll_fds[i];
+                ports[aidx] = ports[i];
+                aidx++;
+            }
+        }
+        poll_fds.resize(aidx);
+        ports.resize(aidx);
 
-                if (getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+        // timeout in ms
+        int ret = poll(poll_fds.data(), poll_fds.size(), 5000);
 
-                    #if LOG
-                    std::string o = "Port " + std::to_string(ports[i]) + " is open on " + ip + "\n";
-                    log_file << o;
-                    #endif
+        if (ret == -1) {
+            // poll error, really bad
+            perror("poll");
+            return;
+        } else {
+            // check for fds we can write to
+            for (size_t i = 0; i < poll_fds.size(); i++) {
+                if (poll_fds[i].revents & POLLOUT) {
+                    int error = 0;
+                    socklen_t len = sizeof(error);
 
-                    h.ports.push_back(ports[i]);
+                    if (getsockopt(poll_fds[i].fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+
+                        #if LOG
+                        std::string o = "Port " + std::to_string(ports[i]) + " is open on " + ip + "\n";
+                        log_file << o;
+                        #endif
+
+                        h.ports.push_back(ports[i]);
+                    }
                 }
             }
         }
-    }
 
-    // close fds
-    for(size_t i = 0; i < poll_fds.size(); i++) {
-        close(poll_fds[i].fd);
+        // close fds
+        for(size_t i = 0; i < poll_fds.size(); i++) {
+            close(poll_fds[i].fd);
+        }
     }
 
     if (h.ports.size() > 0) {
@@ -150,7 +164,7 @@ int main(int argc, char* argv[]) {
     auto start = std::chrono::high_resolution_clock::now();
 
     #if LOG
-    log_file = std::ofstream("log", std::ios::trunc);
+    log_file = std::ofstream("/home/joey574/repos/CLT/log", std::ios::trunc);
 
     if (!log_file.is_open()) {
         std::cerr << "Problem opening log file\n";
@@ -237,7 +251,7 @@ int main(int argc, char* argv[]) {
         std::string o = "Scanning " + ip + "\n";
         log_file << o;
         #endif
-        
+
         scan_ip(ip, &scan_port_tcp, data);
     }
 
