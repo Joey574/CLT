@@ -156,7 +156,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
     const char* SUBSTRING = "\"url\": \"";
 
     const char* URL_A = "https://api.github.com/users/";
-    const char* URL_B = "https://api.github.com/user/repos";
+    const char* URL_B = "https://api.github.com/user/repos?per_page=100";
 
     const char* USERCHECK = "https://api.github.com/user";
 
@@ -210,7 +210,7 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
         // other user, use URL_A
         append(&finalcmd, URL_A);
         append(&finalcmd, user);
-        append(&finalcmd, "/repos");
+        append(&finalcmd, "/repos?per_page=100");
     } else {
         // ERROR
         printf("ERROR GETTING USER\n%s", recvbuf);
@@ -223,11 +223,6 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
 
     while(fgets(recvbuf, sizeof(recvbuf), pipe) != NULL) {
         append(&html, recvbuf);
-
-        if (strstr(recvbuf, "\"encoding\":") != NULL) {
-            break;
-        }
-
         memset(recvbuf, 0, 512);
     }
 
@@ -251,8 +246,8 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
         string tmp = { 0, (char*)malloc(0) };
         appendn(&tmp, searchstring, eidx - idx);
 
-        if (strstr(tmp.str, "licenses") == NULL && tmp.len > strlen(home_repo.str)) {
-            
+        if (strstr(tmp.str, "licenses") == NULL && tmp.len > strlen(home_repo.str) && strstr(tmp.str, user) != NULL) {
+
             __uint8_t valid = 1;
             for (size_t i = 0; i < exclude.elements && valid; i++) {
                 if (strstr(tmp.str, exclude.str[i].str) != NULL) {
