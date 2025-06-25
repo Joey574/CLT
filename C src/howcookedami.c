@@ -151,7 +151,7 @@ void feedback(const char* pat) {
     }    
 }
 
-stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
+stringarr parse_repos(char* user, char* pat, stringarr exclude, stringarr include, LOCs* locs) {
     const char* CURLCMD = "curl -s -H \"Authorization: token ";
     const char* SUBSTRING = "\"url\": \"";
 
@@ -251,6 +251,12 @@ stringarr parse_repos(char* user, char* pat, stringarr exclude, LOCs* locs) {
             __uint8_t valid = 1;
             for (size_t i = 0; i < exclude.elements && valid; i++) {
                 if (strstr(tmp.str, exclude.str[i].str) != NULL) {
+                    valid = 0;
+                }
+            }
+
+            for (size_t i = 0; i < include.elements && valid && include.elements > 0; i++) {
+                if (strstr(tmp.str, include.str[i].str) == NULL) {
                     valid = 0;
                 }
             }
@@ -429,6 +435,14 @@ void parse_dir(LOCs* locs, string url, const char* pat) {
                     if (strcmp(fileext, "hpp") == 0) {
                         parse_file(locs, tmp_url, pat, 2);
                     }
+
+                    /*
+                        additional check for tpp files, 1 -> index of cpp files, done here for reasons already listed
+                        tpp often used for template code
+                    */
+                   if (strcmp(fileext, "tpp") == 0) {
+                    parse_file(locs, tmp_url, pat, 1);
+                   }
                 }
             } else if (searchstring[typeidx] == 'd') {
                 #if LOG
@@ -500,6 +514,7 @@ int main(int argc, char* argv[]) {
     char* pat;
     
     stringarr excluded = { 0, (string*)malloc(0) };
+    stringarr included = {0, (string*)malloc(0) };
 
     for(int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-u") == 0) {
@@ -524,6 +539,16 @@ int main(int argc, char* argv[]) {
             }
             
         }
+
+        if (strcmp(argv[i], "-i") == 0) {
+            if (argc > i + 1) {
+                included.elements++;
+                included.str = (string*)realloc(included.str, included.elements * sizeof(string));
+
+                included.str[included.elements-1].len = strlen(argv[i+1]);
+                included.str[included.elements-1].str = argv[i+1];
+            }
+        }
     }
 
     locs_size = sizeof(supported_languages) / sizeof(supported_languages[0]);
@@ -537,7 +562,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    stringarr repos = parse_repos(user, pat, excluded, &g_locs);
+    stringarr repos = parse_repos(user, pat, excluded, included, &g_locs);
 
     #if LOG
     printf("Repos:\n");
